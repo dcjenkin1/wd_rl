@@ -79,7 +79,7 @@ lead_dict = {}
 wip_levels = {}
 
 for ht in head_types:
-    d = {ht:random.randint(10000,250000)}
+    d = {ht:10000}
     lead_dict.update(d)
 
     w = {ht:10}
@@ -172,7 +172,7 @@ while my_sim.env.now < sim_time:
     action = choose_action(my_sim, state, sim_time)
 
     my_sim.run_action(mach, action[0], action[1])
-
+    print('Step Reward:'+ str(my_sim.step_reward))
     # Record the machine, state, allowed actions and reward at the new time step
     next_mach = my_sim.next_machine
     next_state = get_state(my_sim)

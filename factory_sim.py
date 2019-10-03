@@ -260,7 +260,15 @@ class FactorySim(object):
                     self.allowed_actions = allowed_actions
                     return
         while True:
+            before_time = self.env.now
             self.env.step()
+            time_change = self.env.now-before_time
+            current_week = math.ceil(self.env.now / (7 * 24 * 60))  # Calculating the current week
+            for key, value in self.due_wafers.items():
+                buffer_list = []  # This list stores value of previous unfinished wafers count
+                buffer_list.append(sum(value[:current_week]))
+                self.step_reward -= time_change*sum(buffer_list)
+
             for machine in self.machines_list:
                 if machine.available:
                     allowed_actions = machine.get_allowed_actions(self)
@@ -268,37 +276,6 @@ class FactorySim(object):
                         self.next_machine = machine
                         self.allowed_actions = allowed_actions
                         return
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 
 
