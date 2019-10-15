@@ -118,16 +118,18 @@ class Machine(object):
                     # Subtract wafer,number_wafers wafers from the corresponding list element 
                     sim_inst.due_wafers[wafer.HT][week_index] -= wafer.number_wafers
 
-                    new_wafer = wafer_box(sim_inst, sim_inst.num_wafers, wafer.HT, sim_inst.wafer_index,
-                                          sim_inst.lead_dict)
-                    sim_inst.queue_lists[sim_inst.recipes[wafer.HT][0][0]].append(new_wafer)
-                    lead_time = sim_inst.lead_dict[wafer.HT]
-                    total_processing_time = new_wafer.start_time + lead_time
-                    week_number = int(total_processing_time / (7 * 24 * 60))
-                    sim_inst.due_wafers[wafer.HT][week_number] += sim_inst.num_wafers
-                    sim_inst.wafer_index += 1
-
-
+                    if all((sum(sim_inst.due_wafers[ht])<=(sim_inst.n_part_mix-1)*sim_inst.part_mix[ht]*
+                            sim_inst.num_wafers) for ht in sim_inst.recipes.keys()):
+                        for ht in sim_inst.recipes.keys():
+                            for i in range(sim_inst.part_mix[ht]):
+                                new_wafer = wafer_box(sim_inst, sim_inst.num_wafers, ht, sim_inst.wafer_index,
+                                                      sim_inst.lead_dict)
+                                sim_inst.queue_lists[sim_inst.recipes[ht][0][0]].append(new_wafer)
+                                lead_time = sim_inst.lead_dict[ht]
+                                total_processing_time = new_wafer.start_time + lead_time
+                                week_number = int(total_processing_time / (7 * 24 * 60))
+                                sim_inst.due_wafers[ht][week_number] += sim_inst.num_wafers
+                                sim_inst.wafer_index += 1
 
                 if self.break_mean is not None:
                     break_process.interrupt()
@@ -151,7 +153,7 @@ class Machine(object):
 ####################################################
 class FactorySim(object):
     #Initialize simpy environment and set the amount of time the simulation will run for
-    def __init__(self, sim_time, m_dict, recipes, lead_dict, wafers_per_box, wip_levels, break_mean=None, repair_mean=None):
+    def __init__(self, sim_time, m_dict, recipes, lead_dict, wafers_per_box, part_mix, n_part_mix, break_mean=None, repair_mean=None):
         self.break_mean = break_mean
         self.repair_mean = repair_mean
         self.order_completed = False
@@ -162,7 +164,8 @@ class FactorySim(object):
         # self.dgr = dgr_dict
         self.lead_dict = lead_dict
         self.num_wafers = wafers_per_box
-        self.wip_levels = wip_levels
+        self.part_mix = part_mix
+        self.n_part_mix = n_part_mix
         # self.machine_failure = False
 
         # Number of future weeks we want to look into for calculating due dates
@@ -216,8 +219,8 @@ class FactorySim(object):
 
 
     def start(self):
-        for ht in self.wip_levels.keys():
-            for i in range(self.wip_levels[ht]):
+        for ht in self.part_mix.keys():
+            for i in range(self.n_part_mix*self.part_mix[ht]):
                 new_wafer = wafer_box(self, self.num_wafers, ht, self.wafer_index, self.lead_dict)
                 self.queue_lists[self.recipes[ht][0][0]].append(new_wafer)
                 lead_time = self.lead_dict[ht]

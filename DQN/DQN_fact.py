@@ -14,8 +14,8 @@ WEEK = 24*7
 NO_OF_WEEKS = math.ceil(sim_time/WEEK)
 num_seq_steps = 10
 
-recipes = pd.read_csv('~/Desktop/GSR/fall19/random/test/recipes.csv')
-machines = pd.read_csv('~/Desktop/GSR/fall19/random/test/machines.csv')
+recipes = pd.read_csv('~/Documents/workspace/WDsim/recipes.csv')
+machines = pd.read_csv('~/Documents/workspace/WDsim/machines.csv')
 
 recipes = recipes[recipes.MAXIMUMLS != 0]
 
@@ -73,18 +73,21 @@ break_mean = 1e5
 
 repair_mean = 20
 
+n_part_mix = 1
+
 # average lead time for each head type
 head_types = recipes.keys()
 lead_dict = {}
 
-wip_levels = {}
+part_mix = {}
+
 
 for ht in head_types:
     d = {ht:10000}
     lead_dict.update(d)
 
     w = {ht:10}
-    wip_levels.update(w)
+    part_mix.update(w)
 
 
 ####################################################
@@ -120,7 +123,7 @@ def get_state(sim):
 
 
 # Create the factory simulation object
-my_sim = fact_sim.FactorySim(sim_time, machine_dict, recipes, lead_dict, wafers_per_box, wip_levels)
+my_sim = fact_sim.FactorySim(sim_time, machine_dict, recipes, lead_dict, wafers_per_box, part_mix, n_part_mix)
 # start the simulation
 my_sim.start()
 # Retrieve machine object for first action choice
