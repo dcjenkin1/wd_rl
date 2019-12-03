@@ -9,14 +9,15 @@ import math
 ########## CREATING THE WAFER CLASS  ###############
 ####################################################
 class wafer_box(object):
-    def __init__(self, sim_inst, number_wafers, HT, wafer_index, lead_dict):
+    def __init__(self, sim_inst, number_wafers, HT, wafer_index, lead_dict, seq=0):
         self.env = sim_inst.env
         self.name = f"w{wafer_index}"
         self.start_time = sim_inst.env.now
         self.number_wafers = number_wafers
         self.HT = HT
-        self.seq = 0
+        self.seq = seq
         self.due_time = self.start_time + lead_dict[self.HT]
+
 
 ####################################################
 ########## CREATING THE MACHINE CLASS ##############
@@ -57,28 +58,12 @@ class Machine(object):
         except:
             self.time_to_fail -= self.env.now-start
 
-    def get_proc_time(self, wafer, sim_inst):
-        proc_step = sim_inst.recipes[wafer.HT][wafer.seq]
-        A = proc_step[1]
-        B = proc_step[2]
-        LS = proc_step[3]
-        include_load = proc_step[4]
-        load = proc_step[5]
-        include_unload = proc_step[6]
-        unload = proc_step[7]
-        proc_t = A * wafer.number_wafers + B * math.ceil(wafer.number_wafers/LS)
-
-        if include_load == -1:
-            proc_t += load
-        if include_unload == -1:
-            proc_t += unload
-        return proc_t
 
     def part_process(self, wafer, sim_inst):
         # This function defines a process where a part of head type HT and sequence step seq is processed on the machine
 
         # get the amount of time it takes for the operation to run
-        proc_t = self.get_proc_time(wafer, sim_inst)
+        proc_t = sim_inst.get_proc_time(wafer.HT, wafer.seq, wafer.number_wafers)
 
         done_in = proc_t
         while done_in:
@@ -107,7 +92,10 @@ class Machine(object):
                     # sim_inst.queue_lists['complete'].append(wafer)
                     sim_inst.cycle_time.append(self.env.now - wafer.start_time)
                     print("Finished processing wafer %s at %s"%(wafer.name, self.env.now))
+                    sim_inst.complete_wafer_dict[wafer.HT]+=1
 
+
+                    sim_inst.lateness.append(max([0, (sim_inst.env.now-wafer.due_time)]))
                     # Update the due_wafers dictionary to indicate that wafers of this head type were completed
 
                     # Find the index of the earliest week for which there are one or more wafers of the given head type
@@ -117,16 +105,21 @@ class Machine(object):
                     # Subtract wafer,number_wafers wafers from the corresponding list element 
                     sim_inst.due_wafers[wafer.HT][week_index] -= wafer.number_wafers
 
-                    new_wafer = wafer_box(sim_inst, sim_inst.num_wafers, wafer.HT, sim_inst.wafer_index,
-                                          sim_inst.lead_dict)
-                    sim_inst.queue_lists[sim_inst.recipes[wafer.HT][0][0]].append(new_wafer)
-                    lead_time = sim_inst.lead_dict[wafer.HT]
-                    total_processing_time = new_wafer.start_time + lead_time
-                    week_number = int(total_processing_time / (7 * 24 * 60))
-                    sim_inst.due_wafers[wafer.HT][week_number] += sim_inst.num_wafers
-                    sim_inst.wafer_index += 1
-
-
+                    if all((sum(sim_inst.due_wafers[ht])<=(sim_inst.n_part_mix-1)*sim_inst.part_mix[ht]*
+                            sim_inst.num_wafers) for ht in sim_inst.recipes.keys()):
+                        sim_inst.order_completed = True
+                        sim_inst.t_between_completions.append(sim_inst.env.now-sim_inst.order_complete_time)
+                        sim_inst.order_complete_time = sim_inst.env.now
+                        for ht in sim_inst.recipes.keys():
+                            for i in range(sim_inst.part_mix[ht]):
+                                new_wafer = wafer_box(sim_inst, sim_inst.num_wafers, ht, sim_inst.wafer_index,
+                                                      sim_inst.lead_dict)
+                                sim_inst.queue_lists[sim_inst.recipes[ht][0][0]].append(new_wafer)
+                                lead_time = sim_inst.lead_dict[ht]
+                                total_processing_time = new_wafer.start_time + lead_time
+                                week_number = int(total_processing_time / (7 * 24 * 60))
+                                sim_inst.due_wafers[ht][week_number] += sim_inst.num_wafers
+                                sim_inst.wafer_index += 1
 
                 if self.break_mean is not None:
                     break_process.interrupt()
@@ -150,7 +143,7 @@ class Machine(object):
 ####################################################
 class FactorySim(object):
     #Initialize simpy environment and set the amount of time the simulation will run for
-    def __init__(self, sim_time, m_dict, recipes, lead_dict, wafers_per_box, wip_levels, break_mean=None, repair_mean=None):
+    def __init__(self, sim_time, m_dict, recipes, lead_dict, wafers_per_box, part_mix, n_part_mix, break_mean=None, repair_mean=None):
         self.break_mean = break_mean
         self.repair_mean = repair_mean
         self.order_completed = False
@@ -161,8 +154,11 @@ class FactorySim(object):
         # self.dgr = dgr_dict
         self.lead_dict = lead_dict
         self.num_wafers = wafers_per_box
-        self.wip_levels = wip_levels
+        self.part_mix = part_mix
+        self.n_part_mix = n_part_mix
         # self.machine_failure = False
+        self.lateness = []
+        self.t_between_completions = []
 
         # Number of future weeks we want to look into for calculating due dates
         self.FUTURE_WEEKS = 100
@@ -180,6 +176,12 @@ class FactorySim(object):
 
         # sim_inst.recipes give the sequence of stations that must be processed at for the wafer of that head type to be completed
         self.recipes = recipes
+
+        # create a list to store the number of complete wafers for each head type
+        self.complete_wafer_dict = {}
+        for ht in self.recipes.keys():
+            d = {ht:0}
+            self.complete_wafer_dict.update(d)
 
         self.number_of_machines = len(self.machine_dict)
 
@@ -207,10 +209,40 @@ class FactorySim(object):
             for seq, step in enumerate(self.recipes[HT]):
                 self.station_HT_seq[step[0]].append((HT, seq))
 
+    def get_proc_time(self, ht, seq, num_waf):
+        proc_step = self.recipes[ht][seq]
+        A = proc_step[1]
+        B = proc_step[2]
+        LS = proc_step[3]
+        include_load = proc_step[4]
+        load = proc_step[5]
+        include_unload = proc_step[6]
+        unload = proc_step[7]
+        proc_t = A * num_waf + B * math.ceil(num_waf/LS)
+
+        if include_load == -1:
+            proc_t += load
+        if include_unload == -1:
+            proc_t += unload
+        return proc_t
+
+    def get_rem_shop_time(self, ht, seq, num_waf):
+        steps = self.recipes[ht]
+        n_steps = len(steps)
+
+        rem_shop_t = 0
+
+        for i in range(seq, n_steps):
+            rem_shop_t = rem_shop_t + self.get_proc_time(ht, i, num_waf)
+
+        # assert(rem_shop_t>0)
+        return rem_shop_t
+
+
 
     def start(self):
-        for ht in self.wip_levels.keys():
-            for i in range(self.wip_levels[ht]):
+        for ht in self.part_mix.keys():
+            for i in range(self.n_part_mix*self.part_mix[ht]):
                 new_wafer = wafer_box(self, self.num_wafers, ht, self.wafer_index, self.lead_dict)
                 self.queue_lists[self.recipes[ht][0][0]].append(new_wafer)
                 lead_time = self.lead_dict[ht]
@@ -237,14 +269,14 @@ class FactorySim(object):
                         return
 
 
-    def run_action(self, machine, ht, seq):
+    def run_action(self, machine, wafer_choice):
         self.order_completed = False
         self.step_reward = 0
         # Set the machine to be unavailable to process parts because it is now busy
         assert machine.available
         machine.available = False
         # Find the wafer that has that HT and seq
-        wafer_choice = next(wafer for wafer in self.queue_lists[machine.station] if wafer.HT == ht and wafer.seq == seq)
+        # wafer_choice = next(wafer for wafer in self.queue_lists[machine.station] if wafer.HT == ht and wafer.seq == seq)
         # set the wafer being processed on this machine to wafer_choice
         machine.wafer_being_proc = wafer_choice
         # Remove the part from it's queue
@@ -276,8 +308,6 @@ class FactorySim(object):
                         self.next_machine = machine
                         self.allowed_actions = allowed_actions
                         return
-
-
 
 
 
