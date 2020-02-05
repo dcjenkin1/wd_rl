@@ -7,12 +7,12 @@ import random
 matplotlib.use('TkAgg')
 import matplotlib.pyplot as plt
 from itertools import chain
-import DeepQNet
+import ActorCritic
 
-sim_time = 1e5
+sim_time = 3e5
 WEEK = 24*7
 NO_OF_WEEKS = math.ceil(sim_time/WEEK)
-num_seq_steps = 20
+num_seq_steps = 10
 
 recipes = pd.read_csv('~/Documents/workspace/WDsim/recipes.csv')
 machines = pd.read_csv('~/Documents/workspace/WDsim/machines.csv')
@@ -25,14 +25,14 @@ for index, row in machines.iterrows():
     d = {row[0]:row[1]}
     machine_d.update(d)
 
-# Modifying the above list to match the stations from the two datasets
+# Modifying the above list to match the stations from the two datasets 
 a = machines.TOOLSET.unique()
 b = recipes.TOOLSET.unique()
 common_stations = (set(a) & set(b))
 ls = list(common_stations)
 
 # This dictionary has the correct set of stations
-modified_machine_dict = {k: v for k, v in machine_d.items() if v in ls}
+modified_machine_dict = {k:v for k,v in machine_d.items() if v in ls}
 
 # Removing unncommon rows from recipes 
 for index, row in recipes.iterrows():
@@ -73,14 +73,13 @@ break_mean = 1e5
 
 repair_mean = 20
 
-n_part_mix = 30
-
 # average lead time for each head type
 head_types = recipes.keys()
 lead_dict = {}
 
-part_mix = {}
+n_part_mix = 30
 
+part_mix = {}
 
 for ht in head_types:
     d = {ht:15000}
@@ -97,23 +96,14 @@ def get_state(sim):
     # Calculate the state space representation.
     # This returns a list containing the number of` parts in the factory for each combination of head type and sequence
     # step
-    # state_rep = [len([wafer for queue in sim.queue_lists.values() for wafer in queue if wafer.HT
-    #              == ht and wafer.seq == s]) for ht in list(sim.recipes.keys()) for s in
-    #              list(range(len(sim.recipes[ht])))]
-
     state_rep = sum([sim.n_HT_seq[HT] for HT in sim.recipes.keys()], [])
-
-    # assert state_rep == state_rep2
-    print(len(state_rep))
     # b is a one-hot encoded list indicating which machine the next action will correspond to
     b = np.zeros(len(sim.machines_list))
-    print(len(b))
     b[sim.machines_list.index(sim.next_machine)] = 1
     state_rep.extend(b)
     # Append the due dates list to the state space for making the decision
     rolling_window = [] # This is the rolling window that will be appended to state space
-    max_length_of_window = math.ceil(max(sim.lead_dict.values()) / (7*24*60)) # Max length of the window to roll
-    print(max_length_of_window)
+    max_length_of_window = math.ceil(max(sim.lead_dict.values()) / (7*24*60)) # Max length of the window to roll 
     current_time = sim.env.now # Calculating the current time
     current_week = math.ceil(current_time / (7*24*60)) #Calculating the current week 
 
@@ -124,8 +114,7 @@ def get_state(sim):
         rolling_window.extend([buffer_list])
 
     c = sum(rolling_window, [])
-    state_rep.extend(c) # Appending the rolling window to state space
-    print(len(state_rep))
+    state_rep.extend(c) # Appending the rolling window to state space 
     return state_rep
 
 
@@ -144,75 +133,55 @@ action_space = list(chain.from_iterable(my_sim.station_HT_seq.values()))
 action_size = len(action_space)
 state_size = len(state)
 
-# Creating the DQN agent
-dqn_agent = DeepQNet.DQN(state_space_dim= state_size, action_space= action_space, epsilon_decay=0.9999)
+# Creating the A2C agent
+a2c_agent = ActorCritic.A2CAgent(state_size= state_size, action_space= action_space)
 
 order_count = 0
 
 while my_sim.env.now < sim_time:
-    action = dqn_agent.choose_action(state, allowed_actions)
+    action = a2c_agent.choose_action(state, allowed_actions)
 
     wafer_choice = next(wafer for wafer in my_sim.queue_lists[mach.station] if wafer.HT == action[0] and wafer.seq ==
                         action[1])
 
     my_sim.run_action(mach, wafer_choice)
-    print('Step Reward:' + str(my_sim.step_reward))
+    print('Step Reward:'+ str(my_sim.step_reward))
+    
     # Record the machine, state, allowed actions and reward at the new time step
+    reward = my_sim.step_reward
     next_mach = my_sim.next_machine
     next_state = get_state(my_sim)
     next_allowed_actions = my_sim.allowed_actions
-    reward = my_sim.step_reward
+    
 
     print(f"state dimension: {len(state)}")
     print(f"next state dimension: {len(next_state)}")
     print("action space dimension:", action_size)
-    # record the information for use again in the next training example
-    mach, allowed_actions, state = next_mach, next_allowed_actions, next_state
     print("State:", state)
 
-    # Save the example for later training
-    dqn_agent.remember(state, action, reward, next_state, next_allowed_actions)
-
-    if my_sim.order_completed:
-        # After each wafer completed, train the policy network 
-        dqn_agent.replay()
-        order_count+= 1
-        if order_count >= 1:
-            # After every 20 processes update the target network and reset the order count
-            dqn_agent.train_target()
-            order_count = 0
+    # Train the A2C Agent
+    a2c_agent.train_model(state, action, reward, next_state)
 
     # Record the information for use again in the next training example
     mach, allowed_actions, state = next_mach, next_allowed_actions, next_state
 
-
-# Save the trained DQN policy network
-dqn_agent.save_model("DQN_model_5e5.h5")
+# Save the trained A2C Actor and Critic Models
+a2c_agent.save_model("actor.h5", "critic.h5")
 
 # Total wafers produced
 print("Total wafers produced:", len(my_sim.cycle_time))
 
-
+print(np.mean(my_sim.lateness[-1000:]))
 #Wafers of each head type
 print("### Wafers of each head type ###")
-print("### Wafers of each head type ###")
-
-print(my_sim.lateness)
-
 print(my_sim.complete_wafer_dict)
-
-print(np.mean(my_sim.lateness[-1000:]))
-
-print(dqn_agent.epsilon)
 
 # Plot the time taken to complete each wafer
 plt.plot(my_sim.lateness)
 plt.xlabel("Wafers")
-plt.ylabel("lateness")
-plt.title("The amount of time each wafer was late")
+plt.ylabel("Cycle time")
+plt.title("The time taken to complete each wafer")
 plt.show()
-
-
 
 
 

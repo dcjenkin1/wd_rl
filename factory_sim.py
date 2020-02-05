@@ -87,13 +87,13 @@ class Machine(object):
                 if wafer.seq < (len(sim_inst.recipes[wafer.HT])):
                     # add the part to the corresponding queue for the next operation in the sequence
                     sim_inst.queue_lists[sim_inst.recipes[wafer.HT][wafer.seq][0]].append(wafer)
+                    sim_inst.n_HT_seq[wafer.HT][wafer.seq] += 1
                 else:
                     # # add the part to the list of completed parts
                     # sim_inst.queue_lists['complete'].append(wafer)
                     sim_inst.cycle_time.append(self.env.now - wafer.start_time)
                     print("Finished processing wafer %s at %s"%(wafer.name, self.env.now))
-                    sim_inst.complete_wafer_dict[wafer.HT]+=1
-
+                    sim_inst.complete_wafer_dict[wafer.HT] += 1
 
                     sim_inst.lateness.append(max([0, (sim_inst.env.now-wafer.due_time)]))
                     # Update the due_wafers dictionary to indicate that wafers of this head type were completed
@@ -115,6 +115,7 @@ class Machine(object):
                                 new_wafer = wafer_box(sim_inst, sim_inst.num_wafers, ht, sim_inst.wafer_index,
                                                       sim_inst.lead_dict)
                                 sim_inst.queue_lists[sim_inst.recipes[ht][0][0]].append(new_wafer)
+                                sim_inst.n_HT_seq[ht][0] += 1
                                 lead_time = sim_inst.lead_dict[ht]
                                 total_processing_time = new_wafer.start_time + lead_time
                                 week_number = int(total_processing_time / (7 * 24 * 60))
@@ -136,7 +137,9 @@ class Machine(object):
 
     def get_allowed_actions(self, sim_inst):
         #find all (HT, seq) tuples with non zero queues at the station of this machine
-        return sorted(list(set((wafer.HT, wafer.seq) for wafer in sim_inst.queue_lists[self.station])))
+        # newlist = sorted([(ht,seq) for (ht, seq) in sim_inst.station_HT_seq[self.station] if sim_inst.n_HT_seq[ht][seq] > 0])
+        # assert newlist == sorted(list(set((wafer.HT, wafer.seq) for wafer in sim_inst.queue_lists[self.station])))
+        return sorted([(ht,seq) for (ht, seq) in sim_inst.station_HT_seq[self.station] if sim_inst.n_HT_seq[ht][seq] > 0])
 
 ####################################################
 ########## CREATING THE FACTORY CLASS ##############
@@ -161,7 +164,7 @@ class FactorySim(object):
         self.t_between_completions = []
 
         # Number of future weeks we want to look into for calculating due dates
-        self.FUTURE_WEEKS = 100
+        self.FUTURE_WEEKS = math.ceil((max(lead_dict.values()) + sim_time) / (7*24*60) + 1)
 
         # Initialize an index that will be used to name each wafer box
         self.wafer_index = 0
@@ -209,6 +212,8 @@ class FactorySim(object):
             for seq, step in enumerate(self.recipes[HT]):
                 self.station_HT_seq[step[0]].append((HT, seq))
 
+        self.n_HT_seq = {ht: [0]*len(self.recipes[ht]) for ht in list(self.recipes.keys())}
+
     def get_proc_time(self, ht, seq, num_waf):
         proc_step = self.recipes[ht][seq]
         A = proc_step[1]
@@ -245,6 +250,7 @@ class FactorySim(object):
             for i in range(self.n_part_mix*self.part_mix[ht]):
                 new_wafer = wafer_box(self, self.num_wafers, ht, self.wafer_index, self.lead_dict)
                 self.queue_lists[self.recipes[ht][0][0]].append(new_wafer)
+                self.n_HT_seq[ht][0] += 1
                 lead_time = self.lead_dict[ht]
                 total_processing_time = new_wafer.start_time + lead_time
                 week_number = int(total_processing_time / (7*24*60))
@@ -281,6 +287,7 @@ class FactorySim(object):
         machine.wafer_being_proc = wafer_choice
         # Remove the part from it's queue
         self.queue_lists[machine.station].remove(wafer_choice)
+        self.n_HT_seq[wafer_choice.HT][wafer_choice.seq] -= 1
         # Begin processing the part on the machine
         machine.process = self.env.process(machine.part_process(wafer_choice, self))
 
